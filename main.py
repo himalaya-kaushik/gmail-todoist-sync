@@ -240,7 +240,7 @@ def extract_meeting_details(message_stub: dict, service) -> dict:
 # ---------------------------------------------------------------------------
 
 def create_todoist_task(title: str, start_time: str, link: str | None) -> bool:
-    """Create a Todoist task via the REST API v2. Returns True on success."""
+    """Create a Todoist task via the API v1. Returns True on success."""
     api_key = os.environ["TODOIST_API_KEY"]
     description = f"{link or 'No link found'}\nStarts: {start_time}"
 
@@ -256,8 +256,10 @@ def create_todoist_task(title: str, start_time: str, link: str | None) -> bool:
     }
 
     try:
+        logger.info("POST %s", TODOIST_API_URL)
         resp = requests.post(TODOIST_API_URL, json=payload, headers=headers, timeout=30)
-        if resp.status_code == 200:
+        logger.info("Response URL: %s | Status: %d", resp.url, resp.status_code)
+        if resp.status_code in (200, 201):
             logger.info("Todoist task created: %s @ %s", title, start_time)
             return True
         else:
