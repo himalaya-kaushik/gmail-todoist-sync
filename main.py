@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
 GMAIL_QUERY = "newer_than:1d is:unread has:attachment filename:invite.ics"
-TODOIST_API_URL = "https://api.todoist.com/rest/v2/tasks"
+TODOIST_API_URL = "https://api.todoist.com/api/v1/tasks"
 MEETING_LINK_PATTERN = re.compile(
     r"https?://(?:meet\.google\.com|[\w.-]*zoom\.us)/\S+", re.IGNORECASE
 )
