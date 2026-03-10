@@ -14,7 +14,10 @@ import os
 import re
 import traceback
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone, timedelta
+
+# IST is UTC+5:30
+IST = timezone(timedelta(hours=5, minutes=30))
 
 import requests
 from dateutil import parser as dateutil_parser
@@ -107,7 +110,7 @@ def get_unread_invite_emails(service):
 
 def parse_ics(ics_bytes: bytes) -> dict:
     """Parse an .ics attachment and return {title, start_time, link}."""
-    result = {"title": None, "start_time": None, "link": None}
+    result = {"title": None, "start_time": None, "start_date": None, "link": None}
 
     try:
         cal = Calendar.from_ical(ics_bytes)
@@ -119,11 +122,13 @@ def parse_ics(ics_bytes: bytes) -> dict:
                 if dtstart:
                     dt = dtstart.dt
                     if isinstance(dt, datetime):
-                        result["start_time"] = dt.astimezone(timezone.utc).strftime(
-                            "%Y-%m-%d %H:%M UTC"
-                        )
+                        ist_dt = dt.astimezone(IST)
+                        result["start_time"] = ist_dt.strftime("%Y-%m-%d %I:%M %p IST")
+                        result["start_date"] = ist_dt.date()
                     else:
-                        result["start_time"] = dt.isoformat()
+                        # All-day event (date only, no time)
+                        result["start_time"] = dt.strftime("%Y-%m-%d (All day)")
+                        result["start_date"] = dt
 
                 # Try URL first, then LOCATION
                 url = str(component.get("URL", ""))
@@ -151,7 +156,7 @@ def _extract_link_from_text(text: str) -> str | None:
 def extract_meeting_details(message_stub: dict, service) -> dict:
     """Fetch the full message and return {title, start_time, link, message_id}."""
     msg_id = message_stub["id"]
-    details = {"title": None, "start_time": None, "link": None, "message_id": msg_id}
+    details = {"title": None, "start_time": None, "start_date": None, "link": None, "message_id": msg_id}
 
     try:
         msg = (
@@ -215,6 +220,7 @@ def extract_meeting_details(message_stub: dict, service) -> dict:
         parsed = parse_ics(ics_bytes)
         details["title"] = parsed.get("title")
         details["start_time"] = parsed.get("start_time")
+        details["start_date"] = parsed.get("start_date")
         details["link"] = parsed.get("link")
 
     # --- Fallback: regex scan body for meeting link ---
@@ -239,14 +245,28 @@ def extract_meeting_details(message_stub: dict, service) -> dict:
 # Todoist
 # ---------------------------------------------------------------------------
 
-def create_todoist_task(title: str, start_time: str, link: str | None) -> bool:
+def create_todoist_task(title: str, start_time: str, start_date: date | None, link: str | None) -> bool:
     """Create a Todoist task via the API v1. Returns True on success."""
     api_key = os.environ["TODOIST_API_KEY"]
     description = f"{link or 'No link found'}\nStarts: {start_time}"
 
+    # Put date/time in the title so Todoist's smart parsing picks it up
+    task_content = f"Meeting: {title} — {start_time}"
+
+    # Smart due date: today's meetings → "today", future → actual date
+    today_ist = datetime.now(IST).date()
+    if start_date and start_date == today_ist:
+        due_string = "today"
+    elif start_date and start_date > today_ist:
+        # e.g. "2026-03-15" — Todoist will schedule it for that day
+        due_string = start_date.isoformat()
+    else:
+        # Past or unknown date — just use today
+        due_string = "today"
+
     payload = {
-        "content": f"Meeting: {title}",
-        "due_string": "today",
+        "content": task_content,
+        "due_string": due_string,
         "description": description,
     }
     headers = {
@@ -256,11 +276,11 @@ def create_todoist_task(title: str, start_time: str, link: str | None) -> bool:
     }
 
     try:
-        logger.info("POST %s", TODOIST_API_URL)
+        logger.info("POST %s (due: %s)", TODOIST_API_URL, due_string)
         resp = requests.post(TODOIST_API_URL, json=payload, headers=headers, timeout=30)
         logger.info("Response URL: %s | Status: %d", resp.url, resp.status_code)
         if resp.status_code in (200, 201):
-            logger.info("Todoist task created: %s @ %s", title, start_time)
+            logger.info("Todoist task created: %s @ %s (due: %s)", title, start_time, due_string)
             return True
         else:
             logger.error(
@@ -313,12 +333,13 @@ def main() -> None:
             details = extract_meeting_details(msg_stub, service)
             title = details["title"]
             start_time = details["start_time"]
+            start_date = details["start_date"]
             link = details["link"]
             msg_id = details["message_id"]
 
             logger.info("Processing: '%s' at %s", title, start_time)
 
-            success = create_todoist_task(title, start_time, link)
+            success = create_todoist_task(title, start_time, start_date, link)
 
             if success:
                 mark_as_read(service, msg_id)
