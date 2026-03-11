@@ -3,7 +3,7 @@ name: Gmail → Todoist Sync
 on:
   schedule:
     # Every 2 hours
-    - cron: "0 */2 * * *"
+    - cron: "0 */6 * * *"
   workflow_dispatch: # Manual trigger for testing
 
 jobs:
